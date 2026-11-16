@@ -86,15 +86,23 @@
   }
 
   // Переставить будильник по настройкам. Возвращает Date следующего срабатывания или null.
+  // Вызовы выполняются строго по очереди: иначе два одновременных «снять + поставить»
+  // могут оставить в системе два будильника.
+  var queue = Promise.resolve();
   function schedule(cfg) {
-    var A = alarms();
-    return clear().then(function () {
-      var at = A ? nextTime(cfg, new Date()) : null;
-      if (!at) return null;
-      return req(A.add(at, 'ignoreTimezone', { type: TYPE, at: at.getTime() })).then(function (id) {
-        return id === null ? null : at;
+    var run = function () {
+      var A = alarms();
+      return clear().then(function () {
+        var at = A ? nextTime(cfg, new Date()) : null;
+        if (!at) return null;
+        // tz — смещение часового пояса на момент планирования (см. проверку опоздания в app.js)
+        return req(A.add(at, 'ignoreTimezone', { type: TYPE, at: at.getTime(), tz: at.getTimezoneOffset() })).then(function (id) {
+          return id === null ? null : at;
+        });
       });
-    });
+    };
+    queue = queue.then(run, run);
+    return queue;
   }
 
   function launchSelf() {

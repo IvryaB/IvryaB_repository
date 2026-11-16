@@ -116,6 +116,7 @@
     var out = {
       t: Date.now(),
       m: metric,
+      off: num(r.utc_offset_seconds), // часовой пояс города — чтобы отличать «сегодня» от прошедших дней
       cur: {
         temp: num(c.temperature_2m),
         feels: num(c.apparent_temperature),

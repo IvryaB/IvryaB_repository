@@ -164,6 +164,11 @@
     return name + ', ' + date;
   }
   function localTime(ms) { var d = new Date(ms); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  // Время обновления; если не сегодня — с датой (16.11 20:15)
+  function stamp(ms) {
+    var d = new Date(ms), n = new Date(Date.now());
+    return (d.toDateString() === n.toDateString() ? '' : pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + ' ') + localTime(ms);
+  }
   function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
   function errText(e) {
@@ -233,6 +238,22 @@
     return !!(e && e.loc && e.loc.id === locId);
   }
 
+  // «Сейчас» в часовом поясе города: 'ГГГГ-ММ-ДДTЧЧ'
+  function cityNow(w) {
+    var off = (typeof w.off === 'number') ? w.off : -new Date().getTimezoneOffset() * 60;
+    var d = new Date(Date.now() + off * 1000);
+    return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) + 'T' + pad(d.getUTCHours());
+  }
+  // Данные без прошедших дней и часов (если прогноз загружен вчера, «Сегодня» — это действительно сегодня)
+  function upToDate(w) {
+    if (!w) return w;
+    var now = cityNow(w), today = now.slice(0, 10);
+    var days = w.days.filter(function (d) { return d.date.slice(0, 10) >= today; });
+    var hours = w.hours.filter(function (h) { return h.dt.slice(0, 13) > now; });
+    if (days.length === w.days.length && hours.length === w.hours.length) return w;
+    return { t: w.t, m: w.m, off: w.off, src: w.src, cur: w.cur, headline: w.headline, days: days, hours: hours };
+  }
+
   // Сколько данные считаются свежими
   function maxAge() {
     if (settings.ttl > 0) return settings.ttl * MIN;
@@ -273,12 +294,18 @@
     if (!loc) return;
     var ck = cacheKey(loc.id);
     var fresh = ageOf(loc) < maxAge();
-    if ((fresh && !force) || state.inflight[ck]) return;
     var redraw = function () {
       if (!isCurrentLoc(loc.id)) return;
       if (state.view === 'main') renderMain(true);       // фокус и прокрутка сохраняются
       else if (state.view === 'day') views.day.render(true);
+      refreshSoftkeys();
     };
+    if (state.inflight[ck]) {
+      // загрузка уже идёт (например, от уведомления) — просто дождаться её
+      if (force) state.inflight[ck].then(redraw, redraw);
+      return;
+    }
+    if (fresh && !force) return;
     fetchWeather(loc).then(redraw, function (err) {
       if (isCurrentLoc(loc.id) && (state.view === 'main' || state.view === 'day')) toast(errText(err));
       redraw();
@@ -311,9 +338,9 @@
   function refreshNow() {
     var entry = currentEntry();
     if (!entry) return;
-    if (entry.geo) resolveGeo(true);
-    if (entry.loc) loadWeather(entry.loc, true);
-    else renderStatus();
+    var pending = entry.geo && resolveGeo(true, true);
+    if (!pending && entry.loc) loadWeather(entry.loc, true);
+    renderStatus();
     refreshSoftkeys();
   }
 
@@ -323,47 +350,60 @@
   }
 
   // Местоположение. Название места запрашиваем, только если сдвинулись > 5 км или сменился язык.
-  function resolveGeo(force) {
-    if (!settings.geo) return;
-    if (!navigator.geolocation) { state.geoStatus = 'unsupported'; return; }
-    if (state.geoStatus === 'locating') return;
+  // Возвращает true, если запрос места начат: тогда погода загрузится после него (один раз).
+  // forceFix — нужна свежая точка (ручное обновление); wxForce — потом принудительно обновить погоду.
+  var geoSeq = 0, geoWatchdog = null;
+  function resolveGeo(forceFix, wxForce) {
+    if (!settings.geo) return false;
+    if (!navigator.geolocation) { state.geoStatus = 'unsupported'; return false; }
+    if (state.geoStatus === 'locating') return true;
+    if (settings.ttl < 0 && !forceFix && geoLoc) return false; // «только вручную»: место само не ищем
     var recent = geoLoc && geoLoc.lang === lang() && Date.now() - geoLoc.ts < 30 * MIN;
-    if (recent && !force) { state.geoStatus = 'ok'; return; }
+    if (recent && !forceFix) { state.geoStatus = 'ok'; return false; }
 
+    var seq = ++geoSeq;
     state.geoStatus = 'locating';
+    // Завершение ровно один раз: поздние ответы и сторож игнорируются
+    var settle = function (ok) {
+      if (seq !== geoSeq) return;
+      geoSeq++;
+      clearTimeout(geoWatchdog);
+      state.geoStatus = (ok || geoLoc) ? 'ok' : 'error';
+      var cur = currentEntry();
+      if (cur && cur.geo && geoLoc) loadWeather(geoLoc, wxForce);
+      if (state.view === 'main' && cur && cur.geo) {
+        if (!ok) toast(t('locError'));
+        renderMain(true);
+      }
+      refreshSoftkeys();
+    };
+    // Некоторые телефоны не вызывают ни один колбэк — не ждём вечно
+    clearTimeout(geoWatchdog);
+    geoWatchdog = setTimeout(function () { settle(false); }, 25000);
+
     navigator.geolocation.getCurrentPosition(function (pos) {
+      if (seq !== geoSeq) return;
       var lat = pos.coords.latitude, lon = pos.coords.longitude;
-      var done = function () {
-        state.geoStatus = 'ok';
-        if (state.view === 'main' && currentEntry() && currentEntry().geo) {
-          loadWeather(geoLoc, false);
-          renderMain(true);
-        }
-        refreshSoftkeys();
-      };
       if (geoLoc && geoLoc.lang === lang() && distKm(geoLoc.lat, geoLoc.lon, lat, lon) < 5) {
         geoLoc.ts = Date.now();
         save('geo', geoLoc);
-        done();
+        settle(true);
         return;
       }
       Api.get().reverse(lat, lon, ctx()).then(function (loc) {
+        if (seq !== geoSeq) return;
         geoLoc = {
           id: 'g' + lat.toFixed(2) + ',' + lon.toFixed(2),
           name: loc.name, admin: loc.admin, country: loc.country,
           lat: lat, lon: lon, ts: Date.now(), lang: lang()
         };
         save('geo', geoLoc);
-        done();
-      });
+        settle(true);
+      }, function () { settle(false); });
     }, function () {
-      state.geoStatus = geoLoc ? 'ok' : 'error';
-      if (state.view === 'main' && currentEntry() && currentEntry().geo) {
-        toast(t('locError'));
-        renderMain(true);
-      }
-      refreshSoftkeys();
-    }, { enableHighAccuracy: false, timeout: 20000, maximumAge: 30 * MIN });
+      settle(false);
+    }, { enableHighAccuracy: false, timeout: 20000, maximumAge: forceFix ? 0 : 30 * MIN });
+    return true;
   }
 
   /* ================= Уведомления о погоде ================= */
@@ -378,6 +418,7 @@
   function iconUrl() { var a = document.createElement('a'); a.href = 'icons/icon-112.png'; return a.href; }
 
   function composeNotif(e, w) {
+    w = upToDate(w);
     var c = w.cur, m = w.m, parts = [];
     var title = e.loc.name + ': ' + fTemp(c.temp) + (c.text ? ', ' + c.text : '');
     var evening = new Date().getHours() >= 18 && w.days[1];
@@ -393,7 +434,7 @@
       }
     }
     if (c.wind !== null) parts.push(t('nb_wind', fWind(c.wind, m) + (c.dir ? ' ' + c.dir : '')));
-    if (age > 60 * MIN) parts.push(t('nb_old', localTime(w.t)));
+    if (age > 60 * MIN) parts.push(t('nb_old', stamp(w.t)));
     return { title: title, body: capitalize(parts.join(' · ')) };
   }
 
@@ -566,7 +607,7 @@
     var ck = cacheKey(entry.loc.id);
     if (state.loading[ck]) return t('updating');
     if (entry.geo && state.geoStatus === 'locating') return t('locating');
-    var s = t('updated') + ' ' + localTime(w.t);
+    var s = t('updated') + ' ' + stamp(w.t);
     if (state.errors[ck]) s += ' · ' + t('stale');
     return s;
   }
@@ -653,14 +694,14 @@
     }
 
     var entry = currentEntry();
-    var w = weatherFor(entry.loc);
+    var w = upToDate(weatherFor(entry.loc));
     setTheme(w ? Icons.theme(w.cur.icon, w.cur.day) : (entry.loc ? 'cloudy-day' : 'clear-day'));
 
     var html = heroHtml(entry, w, list);
     if (w) {
       if (w.headline) html += '<div class="headline">' + esc(w.headline) + '</div>';
       html += hourlyHtml(w) + dailyHtml(w) + detailsHtml(w) +
-        '<div class="foot f">' + esc(Api.get().name) + ' · ' + esc(t('updated')) + ' ' + localTime(w.t) + '</div>';
+        '<div class="foot f">' + esc(Api.get().name) + ' · ' + esc(t('updated')) + ' ' + stamp(w.t) + '</div>';
     }
     $content.innerHTML = html;
     if (state.hour > (w ? w.hours.length : 0)) state.hour = 0;
@@ -702,8 +743,7 @@
     var force = mode === true;
     if (mode === 'open' && settings.ttl === 0 && entry.loc && ageOf(entry.loc) > 2 * MIN) force = true;
     if (entry.geo) {
-      resolveGeo(mode === true);
-      if (geoLoc) loadWeather(geoLoc, force);
+      if (!resolveGeo(mode === true, force) && geoLoc) loadWeather(geoLoc, force);
     } else {
       loadWeather(entry.loc, force);
     }
@@ -758,7 +798,7 @@
   views.day = {
     enter: function (i) { state.day = i || 0; this.render(); },
     render: function (keep) {
-      var entry = currentEntry(), w = entry && weatherFor(entry.loc);
+      var entry = currentEntry(), w = entry && upToDate(weatherFor(entry.loc));
       var prevIdx = keep ? nav.idx : 0, prevScroll = keep ? $content.scrollTop : 0;
       if (!w || !w.days[state.day]) { go('main'); return; }
       var d = w.days[state.day], m = w.m;
@@ -787,11 +827,11 @@
       if (keep) $content.scrollTop = prevScroll;
     },
     softkeys: function () {
-      var entry = currentEntry(), w = entry && weatherFor(entry.loc), n = w ? w.days.length : 0;
+      var entry = currentEntry(), w = entry && upToDate(weatherFor(entry.loc)), n = w ? w.days.length : 0;
       softkeys(state.day > 0 ? '◀' : '', refreshLabel(), state.day < n - 1 ? '▶' : '');
     },
     key: function (k, e) {
-      var entry = currentEntry(), w = entry && weatherFor(entry.loc), n = w ? w.days.length : 0;
+      var entry = currentEntry(), w = entry && upToDate(weatherFor(entry.loc)), n = w ? w.days.length : 0;
       if (refreshKey() && k === refreshKey()) { refreshNow(); return; }
       switch (k) {
         case 'ArrowUp': move(-1); break;
@@ -923,13 +963,14 @@
 
   /* ================= Экран: поиск города ================= */
 
-  var search = { q: '', results: [], status: '', busy: false };
+  var search = { q: '', results: [], status: '', busy: false, token: 0 };
 
   views.search = {
     enter: function () {
       setTheme('plain');
       setTitle(t('addCity'));
       search.results = []; search.status = t('searchHint'); search.q = '';
+      search.busy = false; search.token++; // ответы прошлых поисков игнорируются
       this.render(0);
     },
     render: function (focusIdx) {
@@ -957,13 +998,15 @@
       search.status = t('searching');
       search.results = [];
       this.render(0);
-      var self = this;
+      var self = this, token = ++search.token;
       Api.get().search(q, ctx()).then(function (list) {
+        if (token !== search.token) return;
         search.busy = false;
         search.results = list;
         search.status = list.length ? '' : t('noResults');
         if (state.view === 'search') self.render(list.length ? 1 : 0);
       }, function (err) {
+        if (token !== search.token) return;
         search.busy = false;
         search.status = errText(err);
         if (state.view === 'search') self.render(0);
@@ -1217,6 +1260,7 @@
     },
     change: function (k, d) {
       var n = settings.notif;
+      state.digits = '';
       switch (k) {
         case 'on':
           n.on = !n.on;
@@ -1326,8 +1370,6 @@
   /* ================= Жизненный цикл ================= */
 
   var started = false, hiddenAt = 0, staleTimer = null, bgJobs = 0;
-  var launchedForAlarm = false;
-  try { launchedForAlarm = !!(navigator.mozHasPendingMessage && navigator.mozHasPendingMessage('alarm')); } catch (e) { /* ignore */ }
 
   // Пока приложение на экране — раз в 5 минут проверяем, не устарели ли данные (запроса нет, если свежие)
   function checkStale() {
@@ -1335,8 +1377,10 @@
     var e = currentEntry();
     if (e && e.loc) loadWeather(e.loc, false);
   }
-  // В режиме «только при открытии» и «вручную» таймера нет вообще
-  function startStaleTimer() { if (!staleTimer && settings.ttl > 0) staleTimer = setInterval(checkStale, 5 * MIN); }
+  // В режимах «только при открытии» и «вручную» таймера нет вообще; в фоне — тоже нет
+  function startStaleTimer() {
+    if (!staleTimer && settings.ttl > 0 && !document.hidden) staleTimer = setInterval(checkStale, 5 * MIN);
+  }
   function stopStaleTimer() { clearInterval(staleTimer); staleTimer = null; }
 
   function start() {
@@ -1355,17 +1399,37 @@
     }, 1500);
   }
 
-  // Фоновый запуск по будильнику: показать уведомление, поставить следующий и закрыться
+  // Фоновый запуск (будильник, закрытое уведомление): сделать дело и закрыться
   function finishBackground() {
     if (bgJobs > 0 || started || !document.hidden) return;
     setTimeout(function () { if (!started && document.hidden && bgJobs === 0) window.close(); }, 500);
   }
 
+  var handledAlarms = {};
   function onAlarm(data) {
+    var at = data && data.at;
+    if (at) { if (handledAlarms[at]) return; handledAlarms[at] = 1; } // дубль того же будильника
     bgJobs++;
-    var late = data && data.at && Date.now() - data.at > 2 * 60 * MIN; // телефон был выключен — не шлём старое
-    var p = (late || !settings.notif.on) ? Promise.resolve() : runNotification(false);
-    p.then(reschedule, reschedule).then(function () { bgJobs--; finishBackground(); });
+    // Не даём телефону уснуть посреди загрузки (экран при этом не включается)
+    var lock = null;
+    try { lock = navigator.requestWakeLock ? navigator.requestWakeLock('cpu') : null; } catch (e) { lock = null; }
+    var done = false;
+    var finish = function () {
+      if (done) return;
+      done = true;
+      clearTimeout(safety);
+      try { if (lock) lock.unlock(); } catch (e) { /* ignore */ }
+      bgJobs--;
+      finishBackground();
+    };
+    var safety = setTimeout(finish, 45000);
+    // ignoreTimezone: будильник срабатывает по местному времени; учитываем смену часового пояса
+    var shift = (data && typeof data.tz === 'number') ? (new Date().getTimezoneOffset() - data.tz) * MIN : 0;
+    var late = at && Date.now() - (at + shift) > 2 * 60 * MIN; // телефон был выключен — не шлём старое
+    // Сначала ставим следующий будильник: если систему закроют посреди загрузки, расписание не потеряется
+    reschedule().then(function () {
+      return (late || !settings.notif.on) ? null : runNotification(false);
+    }).then(finish, finish);
   }
 
   if (navigator.mozSetMessageHandler) {
@@ -1373,8 +1437,10 @@
       navigator.mozSetMessageHandler('alarm', function (a) {
         if (a && a.data && a.data.type === Notify.TYPE) onAlarm(a.data);
       });
+      // Сообщение приходит и при нажатии, и при закрытии уведомления
       navigator.mozSetMessageHandler('notification', function (m) {
         if (m && m.clicked) Notify.launchSelf();
+        else finishBackground();
       });
     } catch (e) { /* ignore */ }
   }
@@ -1395,8 +1461,9 @@
     }
   });
 
-  // При запуске будильником в фоне интерфейс не рисуем — экономим батарею и память
-  // (сообщение будильника приходит асинхронно; если его нет 20 с — просто закрываемся)
-  if (!(launchedForAlarm && document.hidden)) start();
-  else setTimeout(finishBackground, 20000);
+  // Любой запуск без показа на экране (будильник, закрытое уведомление) — фоновый:
+  // интерфейс не рисуем, геолокацию не трогаем. Системное сообщение приходит асинхронно;
+  // если за 20 с ничего не пришло — просто закрываемся. Откроет пользователь — сработает start().
+  if (document.hidden) setTimeout(finishBackground, 20000);
+  else start();
 })();
