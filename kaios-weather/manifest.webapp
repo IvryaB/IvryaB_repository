@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Погода",
-  "description": "Погода от AccuWeather: сейчас, по часам и на 5 дней. Управление кнопками.",
+  "description": "Погода сейчас, по часам и на неделю (Open-Meteo или AccuWeather). Управление кнопками.",
   "launch_path": "/index.html",
   "type": "privileged",
   "icons": {
@@ -15,23 +15,23 @@
   "locales": {
     "ru": {
       "name": "Погода",
-      "subtitle": "Прогноз AccuWeather",
-      "description": "Погода от AccuWeather: сейчас, по часам и на 5 дней."
+      "subtitle": "Прогноз погоды",
+      "description": "Погода сейчас, по часам и на неделю."
     },
     "uk": {
       "name": "Погода",
-      "subtitle": "Прогноз AccuWeather",
-      "description": "Погода від AccuWeather: зараз, погодинно та на 5 днів."
+      "subtitle": "Прогноз погоды",
+      "description": "Погода зараз, погодинно та на тиждень."
     },
     "en-US": {
       "name": "Weather",
-      "subtitle": "AccuWeather forecast",
-      "description": "AccuWeather forecast: now, hourly and 5 days."
+      "subtitle": "Weather forecast",
+      "description": "Weather now, hourly and for the week."
     }
   },
   "permissions": {
     "systemXHR": {
-      "description": "Загрузка погоды с серверов AccuWeather"
+      "description": "Загрузка погоды (Open-Meteo, AccuWeather) и названий мест"
     },
     "geolocation": {
       "description": "Погода для текущего местоположения"

@@ -1,5 +1,5 @@
 /*
- * Погода для KaiOS: экраны, навигация с клавиатуры, кэш.
+ * Погода для KaiOS: экраны, навигация с клавиатуры, кэш, выбор источника данных.
  * Код в ES5 — чтобы работать и на KaiOS 2.5 (Gecko 48), и на KaiOS 3.x.
  */
 (function () {
@@ -35,9 +35,25 @@
   }
   function extend(a, b) { for (var k in b) { if (b.hasOwnProperty(k)) a[k] = b[k]; } return a; }
 
-  var settings = extend({ units: 'metric', lang: 'auto', geo: true, ttl: 60, apiKey: '' }, load('settings', {}));
-  var cities = load('cities', []);
+  var settings = extend({
+    units: 'metric', lang: 'auto', geo: true, ttl: 60,
+    provider: CFG.DEFAULT_PROVIDER || 'openmeteo', keys: {}
+  }, load('settings', {}));
+  settings.keys = settings.keys || {};
+  // Версия 1.0 хранила один ключ AccuWeather и города с ключом AccuWeather
+  if (settings.apiKey) { settings.keys.accuweather = settings.apiKey; }
+  delete settings.apiKey;
+
+  function migrateLoc(l) {
+    if (!l) return null;
+    if (!l.id && l.key) { l.id = 'a' + l.key; l.ids = { accu: String(l.key) }; delete l.key; }
+    l.ids = l.ids || {};
+    return l.id ? l : null;
+  }
+  var cities = load('cities', []).map(migrateLoc).filter(Boolean);
   var geoLoc = load('geo', null);
+  if (geoLoc && !geoLoc.id) geoLoc = null;
+  save('cities', cities);
 
   var state = {
     idx: load('idx', 0) | 0,
@@ -50,6 +66,7 @@
   };
 
   function saveSettings() { save('settings', settings); }
+  saveSettings();
 
   /* ================= Локализация ================= */
 
@@ -67,9 +84,28 @@
     return s;
   }
   function apiLang() { return { ru: 'ru-ru', uk: 'uk-ua', en: 'en-us' }[lang()] || 'en-us'; }
-  function apiKey() { return (settings.apiKey || CFG.ACCUWEATHER_API_KEY || '').replace(/\s+/g, ''); }
+  function provider() { return Api.get(settings.provider); }
+  function apiKey() {
+    var id = provider().id, build = (CFG.API_KEYS && CFG.API_KEYS[id]) || '';
+    return (settings.keys[id] || build || '').replace(/\s+/g, '');
+  }
+  function keyMissing() { return provider().needsKey && !apiKey(); }
 
-  Api.init({ getKey: apiKey });
+  // Всё, что провайдеру нужно знать о языке, единицах и ключе
+  function ctx() {
+    return {
+      key: apiKey(),
+      lang: lang(),
+      accuLang: apiLang(),
+      metric: settings.units === 'metric',
+      wmo: function (c) { var w = t('wmo'); return (w && w[c]) || ''; },
+      compass: function (deg) {
+        if (deg === null || deg === undefined || isNaN(deg)) return '';
+        return t('compass')[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
+      },
+      uvText: function (v) { return t('uvCat')[v < 3 ? 0 : v < 6 ? 1 : v < 8 ? 2 : v < 11 ? 3 : 4]; }
+    };
+  }
 
   /* ================= Форматирование ================= */
 
@@ -99,6 +135,10 @@
   function fVis(v, metric) {
     if (v === null || v === undefined) return '--';
     return (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10) + ' ' + t(metric ? 'u_km' : 'u_mi');
+  }
+  function fRain(v, metric) {
+    if (v === null || v === undefined) return '--';
+    return metric ? (Math.round(v * 10) / 10) + ' ' + t('u_mm') : (Math.round(v * 100) / 100) + ' ' + t('u_in');
   }
   function fPct(v) { return (v === null || v === undefined) ? '--' : Math.round(v) + '%'; }
 
@@ -140,7 +180,8 @@
 
   function errText(e) {
     var type = e && e.type;
-    return t({ nokey: 'needKey', key: 'errKey', forbidden: 'errForbidden', limit: 'errLimit', net: 'errNet' }[type] || 'errServer');
+    return t({ nokey: 'needKey', key: 'errKey', forbidden: 'errForbidden', limit: 'errLimit', net: 'errNet' }[type] || 'errServer',
+      provider().name);
   }
 
   /* ================= Локации и кэш ================= */
@@ -160,11 +201,11 @@
   }
   function setIdx(i) { state.idx = i; save('idx', i); }
 
-  function cacheKey(locKey) { return 'c.' + locKey + '.' + lang() + '.' + settings.units; }
+  function cacheKey(locId) { return 'c.' + provider().id + '.' + locId + '.' + lang() + '.' + settings.units; }
 
   function weatherFor(loc) {
     if (!loc) return null;
-    var ck = cacheKey(loc.key);
+    var ck = cacheKey(loc.id);
     if (!state.data[ck]) {
       var c = load(ck, null);
       if (c) state.data[ck] = c;
@@ -175,7 +216,7 @@
   // Удаляем кэш городов, которых больше нет, и данные в другом языке/единицах
   function pruneCache(aggressive) {
     var keep = {};
-    locations().forEach(function (e) { if (e.loc) keep[CACHE_PREFIX + e.loc.key + '.' + lang() + '.' + settings.units] = 1; });
+    locations().forEach(function (e) { if (e.loc) keep[PREFIX + cacheKey(e.loc.id)] = 1; });
     try {
       for (var i = localStorage.length - 1; i >= 0; i--) {
         var k = localStorage.key(i);
@@ -185,31 +226,34 @@
     if (aggressive) state.data = {};
   }
 
-  function isCurrentLoc(locKey) {
+  function isCurrentLoc(locId) {
     var e = currentEntry();
-    return !!(e && e.loc && e.loc.key === locKey);
+    return !!(e && e.loc && e.loc.id === locId);
   }
 
   function loadWeather(loc, force) {
     if (!loc) return;
-    var ck = cacheKey(loc.key);
+    var ck = cacheKey(loc.id);
     var w = weatherFor(loc);
     var fresh = w && (Date.now() - w.t < settings.ttl * 60000);
     if ((fresh && !force) || state.loading[ck]) return;
-    if (!apiKey()) { state.errors[ck] = new Api.Error('nokey'); return; }
+    if (keyMissing()) { state.errors[ck] = new Api.Error('nokey'); return; }
 
+    var p = provider();
     state.loading[ck] = true;
     state.errors[ck] = null;
-    var metric = settings.units === 'metric';
-    Api.weather(loc.key, apiLang(), metric).then(function (data) {
+    p.weather(loc, ctx()).then(function (data) {
       state.loading[ck] = false;
+      data.src = p.id;
       state.data[ck] = data;
       save(ck, data);
-      if (state.view === 'main' && isCurrentLoc(loc.key)) renderMain(true);
+      // провайдер мог дописать свой id места (loc.ids) — сохраняем
+      if (loc === geoLoc) save('geo', geoLoc); else save('cities', cities);
+      if (state.view === 'main' && isCurrentLoc(loc.id)) renderMain(true);
     }, function (err) {
       state.loading[ck] = false;
       state.errors[ck] = err;
-      if (state.view === 'main' && isCurrentLoc(loc.key)) {
+      if (state.view === 'main' && isCurrentLoc(loc.id)) {
         toast(errText(err));
         renderMain(true);
       }
@@ -225,7 +269,7 @@
   // Определение местоположения. Геокодинг в AccuWeather (1 запрос) делаем
   // только если сдвинулись больше чем на 5 км или сменился язык.
   function resolveGeo(force) {
-    if (!settings.geo || !apiKey()) return;
+    if (!settings.geo || keyMissing()) return;
     if (!navigator.geolocation) { state.geoStatus = 'unsupported'; return; }
     if (state.geoStatus === 'locating') return;
     var recent = geoLoc && geoLoc.lang === lang() && Date.now() - geoLoc.ts < 30 * 60000;
@@ -247,9 +291,13 @@
         done();
         return;
       }
-      Api.geoposition(lat, lon, apiLang()).then(function (loc) {
-        loc.lat0 = lat; loc.lon0 = lon; loc.ts = Date.now(); loc.lang = lang();
-        geoLoc = loc;
+      provider().reverse(lat, lon, ctx()).then(function (loc) {
+        geoLoc = {
+          id: 'g' + lat.toFixed(2) + ',' + lon.toFixed(2),
+          name: loc.name, admin: loc.admin, country: loc.country,
+          lat: lat, lon: lon, lat0: lat, lon0: lon,
+          ids: loc.ids || {}, ts: Date.now(), lang: lang()
+        };
         save('geo', geoLoc);
         done();
       }, function (err) {
@@ -376,19 +424,19 @@
   }
 
   function heroMessage(entry) {
-    if (!apiKey()) return t('needKey');
+    if (keyMissing()) return t('needKey', provider().name);
     if (entry.geo && !entry.loc) {
       if (state.geoStatus === 'unsupported') return t('noGeo');
       if (state.geoStatus === 'error') return t('locError') + '. ' + t('locHint');
       return t('locating');
     }
-    var err = entry.loc && state.errors[cacheKey(entry.loc.key)];
+    var err = entry.loc && state.errors[cacheKey(entry.loc.id)];
     if (err) return errText(err);
     return t('loading');
   }
 
   function statusLine(entry, w) {
-    var ck = cacheKey(entry.loc.key);
+    var ck = cacheKey(entry.loc.id);
     if (state.loading[ck]) return t('updating');
     if (entry.geo && state.geoStatus === 'locating') return t('locating');
     var s = t('updated') + ' ' + localTime(w.t);
@@ -429,7 +477,7 @@
         var pos = Math.max(0, Math.min(100, (w.cur.temp - lo) / range * 100));
         dot = '<i class="bar-dot" style="left:' + pos.toFixed(1) + '%"></i>';
       }
-      var pop = Math.max(d.d.pop || 0, d.n.pop || 0);
+      var pop = Math.max(d.d.pop || 0, d.n ? d.n.pop || 0 : 0);
       rows += '<div class="drow f" data-role="day" data-i="' + i + '"' + (i === 0 ? ' data-anchor="sec-days"' : '') + '>' +
         '<span class="d-name">' + esc(dayLabel(d.date, i)) + '</span>' +
         Icons.svg(d.d.icon, 26) +
@@ -438,7 +486,7 @@
         '<span class="bar"><i style="left:' + left.toFixed(1) + '%;width:' + width.toFixed(1) + '%"></i>' + dot + '</span>' +
         '<span class="d-max">' + fTemp(d.max) + '</span></div>';
     });
-    return '<section class="card" id="sec-days"><h2>' + esc(t('daily')) + '</h2>' + rows + '</section>';
+    return '<section class="card" id="sec-days"><h2>' + esc(t('daily', w.days.length)) + '</h2>' + rows + '</section>';
   }
 
   function tile(label, value) {
@@ -485,7 +533,7 @@
     if (w) {
       if (w.headline) html += '<div class="headline">' + esc(w.headline) + '</div>';
       html += hourlyHtml(w) + dailyHtml(w) + detailsHtml(w) +
-        '<div class="foot f">' + esc(t('dataBy')) + ' · ' + esc(t('updated')) + ' ' + localTime(w.t) + '</div>';
+        '<div class="foot f">' + esc(Api.get(w.src).name) + ' · ' + esc(t('updated')) + ' ' + localTime(w.t) + '</div>';
     }
     $content.innerHTML = html;
     if (state.hour > (w ? w.hours.length : 0)) state.hour = 0;
@@ -585,18 +633,19 @@
       var d = w.days[state.day], m = w.m;
       setTheme(Icons.theme(d.d.icon, true));
       setTitle(dayTitle(d.date, state.day));
-      var half = function (label, h, icon) {
+      var half = function (label, h, rain) {
         return '<section class="card f">' +
-          '<div class="half-h">' + Icons.svg(icon, 40) + '<div><div class="half-l">' + esc(label) + '</div>' +
+          '<div class="half-h">' + Icons.svg(h.icon, 40) + '<div><div class="half-l">' + esc(label) + '</div>' +
           '<div class="half-p">' + esc(h.long) + '</div></div></div>' +
-          '<div class="kv"><span>' + esc(t('precip')) + '</span><b>' + fPct(h.pop) + '</b></div>' +
+          '<div class="kv"><span>' + esc(t('precip')) + '</span><b>' + fPct(h.pop) +
+          (rain !== null && rain !== undefined ? ' · ' + esc(fRain(rain, m)) : '') + '</b></div>' +
           '<div class="kv"><span>' + esc(t('wind')) + '</span><b>' + esc(fWind(h.wind, m) + (h.dir ? ' ' + h.dir : '')) + '</b></div>' +
           '</section>';
       };
       var html = '<div class="dhead f">' + Icons.svg(d.d.icon, 64) +
         '<div><div class="dh-t">' + fTemp(d.max) + ' / ' + fTemp(d.min) + '</div>' +
         '<div class="dh-s">' + esc(t('feels')) + ' ' + fTemp(d.fmax) + ' / ' + fTemp(d.fmin) + '</div></div></div>' +
-        half(t('day'), d.d, d.d.icon) + half(t('night'), d.n, d.n.icon) +
+        (d.n ? half(t('day'), d.d, d.rain) + half(t('night'), d.n, null) : half(t('allDay'), d.d, d.rain)) +
         '<section class="card f">' +
         '<div class="kv"><span>' + esc(t('uv')) + '</span><b>' + (d.uv === null ? '--' : esc(d.uv + (d.uvText ? ' · ' + d.uvText : ''))) + '</b></div>' +
         '<div class="kv"><span>' + esc(t('sunrise')) + '</span><b>' + fClock(d.rise) + '</b></div>' +
@@ -731,7 +780,13 @@
       search.results = [];
       this.render(0);
       var self = this;
-      Api.searchCities(q, apiLang()).then(function (list) {
+      if (keyMissing()) {
+        search.busy = false;
+        search.status = t('needKey', provider().name);
+        this.render(0);
+        return;
+      }
+      provider().search(q, ctx()).then(function (list) {
         search.busy = false;
         search.results = list;
         search.status = list.length ? '' : t('noResults');
@@ -744,7 +799,9 @@
     },
     pick: function (r) {
       for (var i = 0; i < cities.length; i++) {
-        if (cities[i].key === r.key) {
+        var c = cities[i];
+        var same = c.id === r.id || (c.name === r.name && typeof c.lat === 'number' && distKm(c.lat, c.lon, r.lat, r.lon) < 5);
+        if (same) {
           toast(t('exists'));
           setIdx(i + (settings.geo ? 1 : 0));
           go('main');
@@ -786,6 +843,7 @@
   /* ================= Экран: настройки ================= */
 
   var OPTS = {
+    provider: Api.list,
     units: ['metric', 'imperial'],
     lang: ['auto', 'ru', 'uk', 'en'],
     geo: [true, false],
@@ -794,6 +852,7 @@
 
   function optLabel(name, v) {
     switch (name) {
+      case 'provider': return Api.get(v).name + (Api.get(v).needsKey ? '' : ' · ' + t('noKey'));
       case 'units': return v === 'metric' ? '°C' : '°F';
       case 'lang': return t('langNames')[v];
       case 'geo': return v ? t('on') : t('off');
@@ -802,31 +861,35 @@
     return String(v);
   }
 
-  function maskKey(k) {
-    if (!k) return CFG.ACCUWEATHER_API_KEY ? '•••• (build)' : t('notSet');
+  function maskKey() {
+    var k = settings.keys[provider().id];
+    if (!k) return apiKey() ? '•••• (build)' : t('notSet');
     return '••••' + k.slice(-4);
   }
 
   views.settings = {
-    enter: function (focusIdx) {
+    // focus — номер строки или её имя (data-k)
+    enter: function (focus) {
       setTheme('plain');
       setTitle(t('settings'));
-      var rows = [
+      var rows = [['provider', t('s_provider'), optLabel('provider', provider().id)]];
+      if (provider().needsKey) rows.push(['key', t('s_key', provider().name), maskKey()]);
+      rows.push(
         ['units', t('s_units'), optLabel('units', settings.units)],
         ['lang', t('s_lang'), optLabel('lang', settings.lang)],
         ['geo', t('s_geo'), optLabel('geo', settings.geo)],
         ['ttl', t('s_ttl'), optLabel('ttl', settings.ttl)],
-        ['key', t('s_key'), maskKey(settings.apiKey)],
         ['about', t('s_about'), '']
-      ];
-      var html = '';
-      rows.forEach(function (r) {
+      );
+      var html = '', focusIdx = typeof focus === 'number' ? focus : 0;
+      rows.forEach(function (r, i) {
+        if (r[0] === focus) focusIdx = i;
         var cyc = OPTS[r[0]] ? ' cyc' : '';
         html += '<div class="row f' + cyc + '" data-k="' + r[0] + '"><div class="row-main"><div class="row-t">' + esc(r[1]) + '</div>' +
           (r[2] ? '<div class="row-s">' + esc(r[2]) + '</div>' : '') + '</div></div>';
       });
       $content.innerHTML = html;
-      collect(focusIdx || 0);
+      collect(focusIdx);
     },
     softkeys: function () {
       var el = focused();
@@ -834,14 +897,14 @@
       softkeys('', k === 'about' ? t('open') : t('change'), '');
     },
     cycle: function (name, d) {
-      var list = OPTS[name], cur = settings[name], i = list.indexOf(cur);
+      var list = OPTS[name], cur = name === 'provider' ? provider().id : settings[name], i = list.indexOf(cur);
       var next = list[(i + d + list.length) % list.length];
       if (name === 'geo' && next !== cur) setIdx(Math.max(0, state.idx + (next ? 1 : -1)));
       settings[name] = next;
       saveSettings();
-      if (name === 'units' || name === 'lang') { state.errors = {}; pruneCache(false); }
-      if (name === 'geo' && next) state.geoStatus = 'idle';
-      this.enter(nav.idx);
+      if (name === 'units' || name === 'lang' || name === 'provider') { state.errors = {}; pruneCache(false); }
+      if (name === 'provider' || (name === 'geo' && next)) state.geoStatus = 'idle';
+      this.enter(name);
     },
     key: function (k, e) {
       var el = focused(), name = el && el.getAttribute('data-k');
@@ -862,9 +925,9 @@
   views.apikey = {
     enter: function () {
       setTheme('plain');
-      setTitle(t('keyTitle'));
+      setTitle(t('keyTitle', provider().name));
       $content.innerHTML = '<div class="inrow f"><input id="key" type="text" autocomplete="off" spellcheck="false" placeholder="' +
-        esc(t('keyPh')) + '" value="' + esc(settings.apiKey) + '"></div><div class="hint">' + esc(t('keyHint')) + '</div>';
+        esc(t('keyPh')) + '" value="' + esc(settings.keys[provider().id] || '') + '"></div><div class="hint">' + esc(t('keyHint')) + '</div>';
       collect(0);
     },
     softkeys: function () { softkeys(t('cancel'), t('save'), ''); },
@@ -873,17 +936,17 @@
       switch (k) {
         case 'Enter':
           e.preventDefault();
-          settings.apiKey = input.value.replace(/\s+/g, '');
+          settings.keys[provider().id] = input.value.replace(/\s+/g, '');
           saveSettings();
           state.errors = {};
           state.geoStatus = 'idle';
           toast(t('keySaved'));
-          go('settings', 4);
+          go('settings', 'key');
           break;
-        case 'SoftLeft': e.preventDefault(); go('settings', 4); break;
+        case 'SoftLeft': e.preventDefault(); go('settings', 'key'); break;
         case 'Backspace':
           if (input.value.length) return;
-          e.preventDefault(); go('settings', 4); break;
+          e.preventDefault(); go('settings', 'key'); break;
         case 'ArrowUp': case 'ArrowDown': e.preventDefault(); break;
         default: return;
       }
@@ -898,7 +961,8 @@
       t('help').forEach(function (h) {
         html += '<div class="kv"><span>' + esc(h[1]) + '</span><b>' + esc(h[0]) + '</b></div>';
       });
-      html += '</section><div class="hint f">' + esc(t('aboutData')) + '</div>' +
+      html += '</section><div class="hint f">' + esc(t('s_provider')) + ': ' + esc(provider().name) + '</div>' +
+        '<div class="hint f">' + esc(t('aboutData')) + '</div>' +
         '<div class="hint f">' + esc(t('appName')) + ' · ' + esc(t('version', CFG.VERSION || '1.0')) + '</div>';
       $content.innerHTML = html;
       collect(0);
@@ -908,7 +972,7 @@
       switch (k) {
         case 'ArrowUp': move(-1); break;
         case 'ArrowDown': move(1); break;
-        case 'Backspace': case 'Enter': e.preventDefault(); go('settings', 5); break;
+        case 'Backspace': case 'Enter': e.preventDefault(); go('settings', 'about'); break;
         default: return;
       }
     }

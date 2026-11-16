@@ -1,7 +1,8 @@
 #!/bin/sh
 # Сборка пакета для установки на KaiOS.
-#   ./build.sh                       — без ключа (ввести на телефоне в Настройках)
-#   ACCUWEATHER_KEY=xxxx ./build.sh  — ключ вшивается только в архив, не в репозиторий
+#   ./build.sh                       — обычная сборка
+#   ACCUWEATHER_KEY=xxxx ./build.sh  — ключ AccuWeather вшивается только в архив, не в репозиторий
+#   (Open-Meteo ключ не нужен — он выбран по умолчанию)
 set -e
 cd "$(dirname "$0")"
 OUT=dist
@@ -10,7 +11,7 @@ rm -rf "$OUT"
 mkdir -p "$TMP"
 cp -r index.html manifest.webapp manifest.webmanifest css js icons "$TMP/"
 if [ -n "$ACCUWEATHER_KEY" ]; then
-  sed -i.bak "s|ACCUWEATHER_API_KEY: ''|ACCUWEATHER_API_KEY: '$ACCUWEATHER_KEY'|" "$TMP/js/config.js"
+  sed -i.bak "s|accuweather: ''|accuweather: '$ACCUWEATHER_KEY'|" "$TMP/js/config.js"
   rm -f "$TMP/js/config.js.bak"
   echo "Ключ AccuWeather вшит в сборку."
 fi
