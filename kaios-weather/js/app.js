@@ -43,7 +43,7 @@
     times: ['08:00', '14:00', '20:00', ''], days: 'daily'
   };
 
-  var settings = extend({ units: 'metric', lang: 'auto', geo: true, ttl: 0, main: '' }, load('settings', {}));
+  var settings = extend({ units: 'metric', lang: 'auto', geo: true, ttl: 0, main: '', rkey: 'center0' }, load('settings', {}));
   settings.notif = extend(extend({}, DEFAULT_NOTIF), settings.notif || {});
   // остатки версий 1.0–1.1 (AccuWeather)
   delete settings.apiKey; delete settings.keys; delete settings.provider;
@@ -295,6 +295,15 @@
   }
   function refreshSoftkeys() {
     if (state.view === 'main' || state.view === 'day') views[state.view].softkeys();
+  }
+
+  // Какой кнопкой обновлять вручную (настройка «Кнопка обновления»)
+  function centerRefreshes() { return settings.rkey === 'center0' || settings.rkey === 'center'; }
+  function refreshKey() { return settings.rkey === 'center0' ? '0' : (settings.rkey === 'center' ? '' : settings.rkey); }
+  // Подпись центральной софт-клавиши там, где она не открывает день
+  function refreshLabel() {
+    if (busy()) return t('sk_busy');
+    return centerRefreshes() ? t('refresh') : t('skKeyHint', refreshKey());
   }
 
   // Ручное обновление: ничего не перекрывает и не сбрасывает прокрутку.
@@ -707,12 +716,13 @@
     enter: function (mode) { enterLocation(mode || false); },
     softkeys: function () {
       var el = focused(), role = el && el.getAttribute('data-role');
-      var c = role === 'day' ? t('open') : (role === 'add' ? t('add') : (busy() ? t('sk_busy') : t('refresh')));
+      var c = role === 'day' ? t('open') : (role === 'add' ? t('add') : refreshLabel());
       softkeys(t('cities'), c, t('settings'));
       updateHours();
     },
     key: function (k, e) {
       var el = focused(), role = el && el.getAttribute('data-role');
+      if (refreshKey() && k === refreshKey()) { refreshNow(); return; }
       switch (k) {
         case 'ArrowUp': move(-1); break;
         case 'ArrowDown': move(1); break;
@@ -730,9 +740,8 @@
         case 'Enter':
           if (role === 'day') go('day', parseInt(el.getAttribute('data-i'), 10));
           else if (role === 'add') go('search');
-          else refreshNow();
+          else if (centerRefreshes()) refreshNow();
           break;
-        case '0': refreshNow(); break;
         case 'SoftLeft': go('cities'); break;
         case 'SoftRight': go('settings'); break;
         case 'Backspace':
@@ -779,10 +788,11 @@
     },
     softkeys: function () {
       var entry = currentEntry(), w = entry && weatherFor(entry.loc), n = w ? w.days.length : 0;
-      softkeys(state.day > 0 ? '◀' : '', busy() ? t('sk_busy') : t('refresh'), state.day < n - 1 ? '▶' : '');
+      softkeys(state.day > 0 ? '◀' : '', refreshLabel(), state.day < n - 1 ? '▶' : '');
     },
     key: function (k, e) {
       var entry = currentEntry(), w = entry && weatherFor(entry.loc), n = w ? w.days.length : 0;
+      if (refreshKey() && k === refreshKey()) { refreshNow(); return; }
       switch (k) {
         case 'ArrowUp': move(-1); break;
         case 'ArrowDown': move(1); break;
@@ -790,7 +800,7 @@
           if (state.day > 0) { state.day--; this.render(); } break;
         case 'ArrowRight': case 'SoftRight':
           if (state.day < n - 1) { state.day++; this.render(); } break;
-        case 'Enter': case '0': refreshNow(); break;
+        case 'Enter': if (centerRefreshes()) refreshNow(); break;
         case 'Backspace': e.preventDefault(); backToMain(); break;
         default: return;
       }
@@ -1007,7 +1017,8 @@
     ttl: [0, 15, 30, 60, 180, -1],
     units: ['metric', 'imperial'],
     lang: ['auto', 'ru', 'uk', 'en'],
-    geo: [true, false]
+    geo: [true, false],
+    rkey: ['center0', 'center', '0', '1', '5', '*', '#']
   };
 
   function mainOptions() {
@@ -1030,6 +1041,10 @@
       case 'units': return v === 'metric' ? '°C' : '°F';
       case 'lang': return t('langNames')[v];
       case 'geo': return v ? t('on') : t('off');
+      case 'rkey':
+        if (v === 'center0') return t('rkCenter0');
+        if (v === 'center') return t('rkCenter');
+        return t('rkKey', v);
     }
     return String(v);
   }
@@ -1068,6 +1083,7 @@
       setTitle(t('settings'));
       var html = rowHtml('main', t('s_main'), optLabel('main', settings.main), 'cyc') +
         rowHtml('ttl', t('s_ttl'), optLabel('ttl', settings.ttl), 'cyc') +
+        rowHtml('rkey', t('s_rkey'), optLabel('rkey', settings.rkey), 'cyc') +
         rowHtml('notif', t('s_notif'), notifSummary()) +
         rowHtml('bg', t('s_bg'), bgSummary(), 'info') +
         rowHtml('units', t('s_units'), optLabel('units', settings.units), 'cyc') +
@@ -1261,8 +1277,12 @@
       setTheme('plain');
       setTitle(t('helpTitle'));
       var html = '<section class="card f">';
-      t('help').forEach(function (h) {
-        html += '<div class="kv"><span>' + esc(h[1]) + '</span><b>' + esc(h[0]) + '</b></div>';
+      // строка 2 — центральная клавиша, строка 3 — отдельная кнопка обновления
+      t('help').forEach(function (h, i) {
+        var keyName = h[0];
+        if (i === 3) { keyName = refreshKey(); if (!keyName) return; }
+        else if (i === 2 && !centerRefreshes()) h = [h[0], t('helpCenterOpen')];
+        html += '<div class="kv"><span>' + esc(h[1]) + '</span><b>' + esc(keyName) + '</b></div>';
       });
       html += '</section><div class="hint f">' + esc(t('aboutData')) + '</div>' +
         '<div class="hint f">' + esc(t('appName')) + ' · ' + esc(t('version', CFG.VERSION || '1.0')) + '</div>';
