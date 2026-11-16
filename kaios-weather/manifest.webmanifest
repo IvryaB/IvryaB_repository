@@ -1,7 +1,7 @@
 {
   "name": "Погода",
   "short_name": "Погода",
-  "description": "Погода сейчас, по часам и на неделю (Open-Meteo или AccuWeather). Управление кнопками.",
+  "description": "Погода сейчас, по часам и на неделю (Open-Meteo), уведомления по расписанию. Управление кнопками.",
   "lang": "ru",
   "start_url": "/index.html",
   "display": "standalone",
@@ -9,20 +9,51 @@
   "theme_color": "#1b3f6e",
   "background_color": "#121821",
   "icons": [
-    { "src": "/icons/icon-56.png", "type": "image/png", "sizes": "56x56" },
-    { "src": "/icons/icon-112.png", "type": "image/png", "sizes": "112x112" }
+    {
+      "src": "/icons/icon-56.png",
+      "type": "image/png",
+      "sizes": "56x56"
+    },
+    {
+      "src": "/icons/icon-112.png",
+      "type": "image/png",
+      "sizes": "112x112"
+    }
   ],
   "b2g_features": {
-    "version": "1.1.0",
-    "developer": { "name": "IvryaB" },
+    "version": "1.2.0",
+    "developer": {
+      "name": "IvryaB"
+    },
     "type": "privileged",
     "permissions": {
-      "systemXHR": { "description": "Загрузка погоды (Open-Meteo, AccuWeather) и названий мест" },
-      "geolocation": { "description": "Погода для текущего местоположения" }
+      "systemXHR": {
+        "description": "Загрузка погоды (Open-Meteo) и названий мест (OpenStreetMap)"
+      },
+      "geolocation": {
+        "description": "Погода для текущего местоположения"
+      },
+      "alarms": {
+        "description": "Уведомления о погоде по расписанию"
+      },
+      "desktop-notification": {
+        "description": "Уведомления о погоде"
+      }
     },
     "locales": {
-      "en-US": { "name": "Weather", "description": "Weather now, hourly and for the week." }
+      "en-US": {
+        "name": "Weather",
+        "description": "Weather now, hourly and for the week."
+      }
     },
-    "default_locale": "ru"
+    "default_locale": "ru",
+    "messages": [
+      {
+        "alarm": "/index.html"
+      },
+      {
+        "notification": "/index.html"
+      }
+    ]
   }
 }

@@ -1,7 +1,7 @@
 {
-  "version": "1.1.0",
+  "version": "1.2.0",
   "name": "Погода",
-  "description": "Погода сейчас, по часам и на неделю (Open-Meteo или AccuWeather). Управление кнопками.",
+  "description": "Погода сейчас, по часам и на неделю (Open-Meteo), уведомления по расписанию. Управление кнопками.",
   "launch_path": "/index.html",
   "type": "privileged",
   "icons": {
@@ -16,29 +16,43 @@
     "ru": {
       "name": "Погода",
       "subtitle": "Прогноз погоды",
-      "description": "Погода сейчас, по часам и на неделю."
+      "description": "Погода сейчас, по часам и на неделю, уведомления по расписанию."
     },
     "uk": {
       "name": "Погода",
       "subtitle": "Прогноз погоды",
-      "description": "Погода зараз, погодинно та на тиждень."
+      "description": "Погода зараз, погодинно та на тиждень, сповіщення за розкладом."
     },
     "en-US": {
       "name": "Weather",
       "subtitle": "Weather forecast",
-      "description": "Weather now, hourly and for the week."
+      "description": "Weather now, hourly and for the week, with scheduled notifications."
     }
   },
   "permissions": {
     "systemXHR": {
-      "description": "Загрузка погоды (Open-Meteo, AccuWeather) и названий мест"
+      "description": "Загрузка погоды (Open-Meteo) и названий мест (OpenStreetMap)"
     },
     "geolocation": {
       "description": "Погода для текущего местоположения"
+    },
+    "alarms": {
+      "description": "Уведомления о погоде по расписанию"
+    },
+    "desktop-notification": {
+      "description": "Уведомления о погоде"
     }
   },
   "orientation": "portrait",
   "cursor": false,
   "fullscreen": false,
-  "theme_color": "#1b3f6e"
+  "theme_color": "#1b3f6e",
+  "messages": [
+    {
+      "alarm": "/index.html"
+    },
+    {
+      "notification": "/index.html"
+    }
+  ]
 }

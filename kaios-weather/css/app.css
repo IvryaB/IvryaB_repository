@@ -19,16 +19,18 @@ body {
 }
 .hidden { display: none !important; }
 
-/* ---------- Темы фона по погоде ---------- */
+/* ---------- Темы фона по погоде ----------
+ * Однотонные цвета, без градиентов: при прокрутке слабому GPU не нужно
+ * перерисовывать градиент под каждым полупрозрачным блоком. */
 .t-plain       { background: #121821; }
-.t-clear-day   { background: #2f7fd6 linear-gradient(180deg, #2a74cc 0%, #5aa3e8 100%); }
-.t-clear-night { background: #13214a linear-gradient(180deg, #0d1736 0%, #283f72 100%); }
-.t-cloudy-day  { background: #56728f linear-gradient(180deg, #4d6886 0%, #7f97b0 100%); }
-.t-cloudy-night{ background: #1f2a38 linear-gradient(180deg, #1a2330 0%, #36475b 100%); }
-.t-rain        { background: #3a4e6b linear-gradient(180deg, #33465f 0%, #5d7290 100%); }
-.t-storm       { background: #2b2f45 linear-gradient(180deg, #23263a 0%, #474b68 100%); }
-.t-snow        { background: #557391 linear-gradient(180deg, #4e6a87 0%, #8aa3bc 100%); }
-.t-fog         { background: #5b6874 linear-gradient(180deg, #55616d 0%, #848f99 100%); }
+.t-clear-day   { background: #3a86d8; }
+.t-clear-night { background: #182a55; }
+.t-cloudy-day  { background: #5f7b98; }
+.t-cloudy-night{ background: #25313f; }
+.t-rain        { background: #3f5672; }
+.t-storm       { background: #303550; }
+.t-snow        { background: #5b7895; }
+.t-fog         { background: #616e7a; }
 
 /* ---------- Каркас ---------- */
 #app {
@@ -243,7 +245,7 @@ body {
   top: 0;
   bottom: 0;
   border-radius: 3px;
-  background: #8fd0ff linear-gradient(90deg, #7fc8ff, #ffd36b);
+  background: #9fd2f5;
 }
 .bar .bar-dot {
   top: -2px;
@@ -341,6 +343,11 @@ body {
 .row-w { display: flex; align-items: center; font-size: 16px; font-weight: 600; margin-left: 6px; }
 .row-w .wi { margin-right: 4px; }
 .row.add .row-t { color: #8fc4ff; }
+.row.action .row-t { color: #8fc4ff; }
+.row.action.focused .row-t { color: #fff; }
+.row.info .row-t { opacity: 0.8; }
+.star { color: #ffd36b; margin-right: 4px; }
+.hint.warn { color: #ffd36b; opacity: 1; }
 .row.add.focused .row-t { color: #fff; }
 .row.cyc .row-s:before { content: "◀ "; opacity: 0; }
 .row.cyc .row-s:after { content: " ▶"; opacity: 0; }

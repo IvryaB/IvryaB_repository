@@ -1,11 +1,9 @@
 /*
- * Источники погоды. Каждый провайдер приводит ответ к общему виду:
- *   { t, m, cur:{...}, hours:[...], days:[...], headline }
- * Чтобы добавить новый сервис, достаточно описать объект с методами
- * search / reverse / weather и добавить его в PROVIDERS.
+ * Источник погоды: Open-Meteo (бесплатно, без ключа) + OpenStreetMap для названий мест.
+ * Ответ приводится к общему виду: { t, m, cur:{...}, hours:[...], days:[...], headline }.
  *
- * На KaiOS запросы идут через XMLHttpRequest({mozSystem: true}) — это обходит CORS
- * (разрешение systemXHR в манифесте, приложение типа privileged).
+ * На KaiOS запросы идут через XMLHttpRequest({mozSystem: true}) — разрешение systemXHR
+ * в манифесте (приложение типа privileged).
  */
 (function (W) {
   'use strict';
@@ -38,8 +36,6 @@
         try { data = JSON.parse(xhr.responseText); } catch (e) { data = null; }
         var s = xhr.status;
         if (s >= 200 && s < 300 && data !== null) resolve(data);
-        else if (s === 401) reject(new ApiError('key', s));
-        else if (s === 403) reject(new ApiError('forbidden', s));
         else if (s === 429 || s === 503) reject(new ApiError('limit', s));
         else if (s === 0) reject(new ApiError('net', s));
         else reject(new ApiError('server', s));
@@ -60,7 +56,7 @@
   var OSM_REVERSE = 'https://nominatim.openstreetmap.org/reverse';
   var PHOTON_REVERSE = 'https://photon.komoot.io/reverse';
 
-  // Код погоды WMO -> номер иконки (иконки нумеруются как у AccuWeather)
+  // Код погоды WMO -> номер иконки (внутренняя нумерация иконок 1–44, см. icons.js)
   function wmoIcon(c, day) {
     switch (c) {
       case 0: return day ? 1 : 33;
@@ -189,7 +185,6 @@
   var openmeteo = {
     id: 'openmeteo',
     name: 'Open-Meteo',
-    needsKey: false,
     days: 7,
 
     search: function (q, ctx) {
@@ -229,165 +224,11 @@
     }
   };
 
-  /* =================== AccuWeather (нужен API-ключ) =================== */
-
-  var ACCU = 'https://dataservice.accuweather.com';
-
-  function accuGet(path, params, ctx) {
-    if (!ctx.key) return Promise.reject(new ApiError('nokey'));
-    params.apikey = ctx.key;
-    return getJSON(ACCU + path + '?' + qs(params));
-  }
-
-  function aval(o, unit) {
-    if (!o) return null;
-    if (unit && o[unit]) return num(o[unit].Value);
-    return num(o.Value);
-  }
-
-  function accuLoc(r) {
-    if (!r || !r.Key) return null;
-    return {
-      id: 'a' + r.Key,
-      name: r.LocalizedName || r.EnglishName || '',
-      admin: (r.AdministrativeArea && r.AdministrativeArea.LocalizedName) || '',
-      country: (r.Country && r.Country.LocalizedName) || '',
-      lat: r.GeoPosition ? r.GeoPosition.Latitude : null,
-      lon: r.GeoPosition ? r.GeoPosition.Longitude : null,
-      ids: { accu: String(r.Key) }
-    };
-  }
-
-  function accuUv(list) {
-    if (!list) return null;
-    for (var i = 0; i < list.length; i++) {
-      if (list[i].Name === 'UVIndex') return { v: num(list[i].Value), t: list[i].Category || '' };
-    }
-    return null;
-  }
-
-  function accuHalf(h) {
-    h = h || {};
-    var w = h.Wind || {};
-    return {
-      icon: h.Icon,
-      phrase: h.IconPhrase || '',
-      long: h.LongPhrase || h.ShortPhrase || h.IconPhrase || '',
-      pop: num(h.PrecipitationProbability),
-      wind: w.Speed ? num(w.Speed.Value) : null,
-      dir: (w.Direction && w.Direction.Localized) || ''
-    };
-  }
-
-  function accuNormalize(cur, hourly, daily, metric) {
-    var U = metric ? 'Metric' : 'Imperial';
-    cur = (cur && cur[0]) || {};
-    var wind = cur.Wind || {};
-    var out = {
-      t: Date.now(),
-      m: metric,
-      cur: {
-        temp: aval(cur.Temperature, U),
-        feels: aval(cur.RealFeelTemperature, U),
-        text: cur.WeatherText || '',
-        icon: cur.WeatherIcon || 7,
-        day: cur.IsDayTime !== false,
-        hum: num(cur.RelativeHumidity),
-        wind: wind.Speed ? aval(wind.Speed, U) : null,
-        dir: (wind.Direction && wind.Direction.Localized) || '',
-        uv: num(cur.UVIndex),
-        uvText: cur.UVIndexText || '',
-        vis: aval(cur.Visibility, U),
-        pres: aval(cur.Pressure, U),
-        dew: aval(cur.DewPoint, U),
-        cloud: num(cur.CloudCover),
-        obs: cur.LocalObservationDateTime || ''
-      },
-      hours: [],
-      days: [],
-      headline: (daily && daily.Headline && daily.Headline.Text) || ''
-    };
-
-    (hourly || []).forEach(function (h) {
-      out.hours.push({
-        dt: h.DateTime || '',
-        icon: h.WeatherIcon,
-        temp: aval(h.Temperature),
-        pop: num(h.PrecipitationProbability),
-        day: h.IsDaylight !== false
-      });
-    });
-
-    ((daily && daily.DailyForecasts) || []).forEach(function (d) {
-      var t = d.Temperature || {}, rf = d.RealFeelTemperature || {}, uv = accuUv(d.AirAndPollen);
-      out.days.push({
-        date: d.Date || '',
-        min: aval(t.Minimum),
-        max: aval(t.Maximum),
-        fmin: aval(rf.Minimum),
-        fmax: aval(rf.Maximum),
-        d: accuHalf(d.Day),
-        n: accuHalf(d.Night),
-        rain: null,
-        rise: (d.Sun && d.Sun.Rise) || '',
-        set: (d.Sun && d.Sun.Set) || '',
-        uv: uv ? uv.v : null,
-        uvText: uv ? uv.t : ''
-      });
-    });
-    return out;
-  }
-
-  var accuweather = {
-    id: 'accuweather',
-    name: 'AccuWeather',
-    needsKey: true,
-    days: 5,
-
-    search: function (q, ctx) {
-      return accuGet('/locations/v1/cities/search', { q: q, language: ctx.accuLang }, ctx).then(function (list) {
-        var out = [];
-        (list || []).forEach(function (r) { var l = accuLoc(r); if (l) out.push(l); });
-        return out.slice(0, 15);
-      });
-    },
-
-    reverse: function (lat, lon, ctx) {
-      return accuGet('/locations/v1/cities/geoposition/search', {
-        q: lat.toFixed(4) + ',' + lon.toFixed(4), language: ctx.accuLang
-      }, ctx).then(function (r) {
-        var l = accuLoc(r);
-        if (!l) throw new ApiError('server');
-        return l;
-      });
-    },
-
-    // Города, добавленные через другой сервис, получают ключ AccuWeather
-    // по координатам (1 запрос, затем он сохраняется в loc.ids).
-    weather: function (loc, ctx) {
-      loc.ids = loc.ids || {};
-      if (!loc.ids.accu && typeof loc.lat !== 'number') return Promise.reject(new ApiError('server'));
-      var keyP = loc.ids.accu ? Promise.resolve(loc.ids.accu) :
-        accuweather.reverse(loc.lat, loc.lon, ctx).then(function (l) { loc.ids.accu = l.ids.accu; return l.ids.accu; });
-      return keyP.then(function (k) {
-        k = encodeURIComponent(k);
-        var p = { language: ctx.accuLang, details: 'true' };
-        var pm = { language: ctx.accuLang, details: 'true', metric: ctx.metric ? 'true' : 'false' };
-        return Promise.all([
-          accuGet('/currentconditions/v1/' + k, p, ctx),
-          accuGet('/forecasts/v1/hourly/12hour/' + k, pm, ctx),
-          accuGet('/forecasts/v1/daily/5day/' + k, pm, ctx)
-        ]);
-      }).then(function (r) { return accuNormalize(r[0], r[1], r[2], ctx.metric); });
-    }
-  };
-
-  var PROVIDERS = { openmeteo: openmeteo, accuweather: accuweather };
-
+  // Сейчас источник один; чтобы добавить ещё, опишите объект как openmeteo
+  // (id, name, days, search, reverse, weather) и верните его из get().
   W.WxApi = {
     Error: ApiError,
-    list: ['openmeteo', 'accuweather'],
-    get: function (id) { return PROVIDERS[id] || openmeteo; },
+    get: function () { return openmeteo; },
     wmoIcon: wmoIcon
   };
 })(window);
