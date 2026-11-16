@@ -346,6 +346,7 @@ body {
 .row.action .row-t { color: #8fc4ff; }
 .row.action.focused .row-t { color: #fff; }
 .row.info .row-t { opacity: 0.8; }
+.row.info .row-s { white-space: normal; }
 .star { color: #ffd36b; margin-right: 4px; }
 .hint.warn { color: #ffd36b; opacity: 1; }
 .row.add.focused .row-t { color: #fff; }

@@ -236,7 +236,7 @@
   // Сколько данные считаются свежими
   function maxAge() {
     if (settings.ttl > 0) return settings.ttl * MIN;
-    if (settings.ttl === 0) return 30 * MIN; // «при открытии» + раз в 30 мин, пока открыто
+    if (settings.ttl === 0) return 30 * MIN; // «только при открытии»: при смене города — если старше 30 мин
     return Infinity;                          // «только вручную»
   }
   function ageOf(loc) { var w = weatherFor(loc); return w ? Date.now() - w.t : Infinity; }
@@ -1014,6 +1014,14 @@
     return s;
   }
 
+  // Что приложение делает, пока закрыто
+  function bgSummary() {
+    var n = settings.notif;
+    if (!n.on || !Notify.supported()) return t('bgNone');
+    var per = Notify.slots(n).length;
+    return t(n.days === 'daily' ? 'bgNotif' : 'bgNotifDays', per);
+  }
+
   function cycle(list, cur, d) {
     var i = list.indexOf(cur);
     if (i < 0) i = d > 0 ? -1 : 0;
@@ -1028,6 +1036,7 @@
       var html = rowHtml('main', t('s_main'), optLabel('main', settings.main), 'cyc') +
         rowHtml('ttl', t('s_ttl'), optLabel('ttl', settings.ttl), 'cyc') +
         rowHtml('notif', t('s_notif'), notifSummary()) +
+        rowHtml('bg', t('s_bg'), bgSummary(), 'info') +
         rowHtml('units', t('s_units'), optLabel('units', settings.units), 'cyc') +
         rowHtml('lang', t('s_lang'), optLabel('lang', settings.lang), 'cyc') +
         rowHtml('geo', t('s_geo'), optLabel('geo', settings.geo), 'cyc') +
@@ -1037,7 +1046,7 @@
     },
     softkeys: function () {
       var el = focused(), k = el && el.getAttribute('data-k');
-      softkeys('', (k === 'about' || k === 'notif') ? t('open') : t('change'), '');
+      softkeys('', k === 'bg' ? '' : (k === 'about' || k === 'notif') ? t('open') : t('change'), '');
     },
     change: function (name, d) {
       if (name === 'main') {
@@ -1053,6 +1062,7 @@
         }
         settings[name] = next;
         saveSettings();
+        if (name === 'ttl') { stopStaleTimer(); startStaleTimer(); }
         if (name === 'units' || name === 'lang') { state.errors = {}; pruneCache(false); }
       }
       this.enter(name);
@@ -1065,7 +1075,7 @@
         case 'ArrowLeft': case 'ArrowRight': case 'Enter':
           if (name === 'notif') { if (k === 'Enter') go('notif'); }
           else if (name === 'about') { if (k === 'Enter') go('about'); }
-          else if (name) this.change(name, k === 'ArrowLeft' ? -1 : 1);
+          else if (name && name !== 'bg') this.change(name, k === 'ArrowLeft' ? -1 : 1);
           break;
         case 'Backspace': e.preventDefault(); go('main'); break;
         default: return;
@@ -1120,6 +1130,7 @@
         '</div><div class="row-s" id="n-next">' + esc(nextLabel()) + '</div></div></div>' +
         rowHtml('test', t('n_test'), '', 'action');
       if (n.mode === 'times') html += '<div class="hint">' + esc(t('n_timeHint')) + '</div>';
+      html += '<div class="hint">' + esc(t('n_battery')) + '</div>';
       if (!Notify.supported()) html += '<div class="hint warn">' + esc(t('n_unsupported')) + '</div>';
       $content.innerHTML = html;
       collect(typeof focus === 'string' ? indexOfKey(focus) : 0);
@@ -1271,7 +1282,8 @@
     var e = currentEntry();
     if (e && e.loc) loadWeather(e.loc, false);
   }
-  function startStaleTimer() { if (!staleTimer) staleTimer = setInterval(checkStale, 5 * MIN); }
+  // В режиме «только при открытии» и «вручную» таймера нет вообще
+  function startStaleTimer() { if (!staleTimer && settings.ttl > 0) staleTimer = setInterval(checkStale, 5 * MIN); }
   function stopStaleTimer() { clearInterval(staleTimer); staleTimer = null; }
 
   function start() {
@@ -1284,7 +1296,10 @@
     go('main', 'open');
     startStaleTimer();
     // будильник переставляем после отрисовки, чтобы не тормозить запуск
-    setTimeout(function () { pruneCache(false); if (settings.notif.on) reschedule(); }, 1500);
+    setTimeout(function () {
+      pruneCache(false);
+      if (settings.notif.on) reschedule(); else Notify.clear();
+    }, 1500);
   }
 
   // Фоновый запуск по будильнику: показать уведомление, поставить следующий и закрыться
