@@ -1,0 +1,373 @@
+/*
+ * Экран KaiOS: 240×320 (иногда 320×240). Без CSS grid и flex-gap (нет в Gecko 48),
+ * без blur/больших теней/анимаций — всё дёшево для слабых GPU.
+ */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Open Sans", "Roboto", sans-serif;
+  font-size: 14px;
+  line-height: 1.3;
+  color: #fff;
+  background: #121821;
+  -moz-user-select: none;
+  user-select: none;
+}
+.hidden { display: none !important; }
+
+/* ---------- Темы фона по погоде ---------- */
+.t-plain       { background: #121821; }
+.t-clear-day   { background: #2f7fd6 linear-gradient(180deg, #2a74cc 0%, #5aa3e8 100%); }
+.t-clear-night { background: #13214a linear-gradient(180deg, #0d1736 0%, #283f72 100%); }
+.t-cloudy-day  { background: #56728f linear-gradient(180deg, #4d6886 0%, #7f97b0 100%); }
+.t-cloudy-night{ background: #1f2a38 linear-gradient(180deg, #1a2330 0%, #36475b 100%); }
+.t-rain        { background: #3a4e6b linear-gradient(180deg, #33465f 0%, #5d7290 100%); }
+.t-storm       { background: #2b2f45 linear-gradient(180deg, #23263a 0%, #474b68 100%); }
+.t-snow        { background: #557391 linear-gradient(180deg, #4e6a87 0%, #8aa3bc 100%); }
+.t-fog         { background: #5b6874 linear-gradient(180deg, #55616d 0%, #848f99 100%); }
+
+/* ---------- Каркас ---------- */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+#titlebar {
+  flex: none;
+  height: 28px;
+  line-height: 28px;
+  padding: 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  padding-bottom: 4px;
+}
+#softkeys {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 6px;
+  background: #0b0f15;
+  font-size: 13px;
+  font-weight: 600;
+}
+/* Боковые подписи делят место поровну, центральная — по содержимому */
+#sk-left, #sk-right {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#sk-left { text-align: left; }
+#sk-right { text-align: right; }
+#sk-center {
+  flex: 0 0 auto;
+  max-width: 50%;
+  padding: 0 4px;
+  text-align: center;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#toast {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: 38px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #e9eef4;
+  color: #111;
+  font-size: 13px;
+  text-align: center;
+  z-index: 10;
+}
+
+/* Общая подсветка фокуса — светлая рамка, без теней снаружи */
+.focused {
+  background-color: rgba(255, 255, 255, 0.2);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.9);
+}
+
+.wi { display: block; flex: none; }
+.pin { vertical-align: -2px; margin-right: 3px; }
+
+/* ---------- Главный экран ---------- */
+.hero {
+  margin: 6px 6px 4px;
+  padding: 6px 8px 8px;
+  border-radius: 12px;
+}
+.hero.focused { background-color: rgba(255, 255, 255, 0.1); box-shadow: none; }
+.loc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 15px;
+  font-weight: 600;
+}
+.loc-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-right: 6px;
+}
+.dots { flex: none; white-space: nowrap; }
+.dots i {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 3px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+}
+.dots i.on { background: #fff; }
+.hero-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+.hero-temp {
+  font-size: 60px;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -2px;
+}
+.hero-text {
+  font-size: 17px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hero-sub { font-size: 13px; opacity: 0.85; margin-top: 2px; }
+.hero-status { font-size: 12px; opacity: 0.7; margin-top: 3px; }
+.hero-msg { font-size: 15px; margin: 18px 0 14px; line-height: 1.4; }
+
+.headline {
+  margin: 0 6px 6px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.16);
+  font-size: 13px;
+}
+
+.card {
+  margin: 0 6px 6px;
+  padding: 6px 0 4px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.16);
+}
+.card.plain { background: none; padding-top: 2px; }
+.card h2 {
+  margin: 0 10px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.75;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* Почасовой прогноз: горизонтальная лента, листается ◀ ▶ */
+.hours {
+  overflow: hidden;
+  margin: 0 4px;
+  border-radius: 10px;
+}
+.hours.focused { background: none; box-shadow: none; }
+.hrow { white-space: nowrap; font-size: 0; padding: 2px 0; }
+.hr {
+  display: inline-block;
+  width: 44px;
+  padding: 3px 0;
+  border-radius: 9px;
+  text-align: center;
+  font-size: 12px;
+  vertical-align: top;
+}
+.hr .wi { margin: 2px auto; }
+.hr-v { font-size: 15px; font-weight: 600; }
+.hr-p { font-size: 11px; color: #a8dcff; height: 14px; }
+.hr.sel { background: rgba(255, 255, 255, 0.24); box-shadow: inset 0 0 0 2px #fff; }
+
+/* Прогноз на 5 дней */
+.drow {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 8px;
+  margin: 0 4px;
+  border-radius: 9px;
+  font-size: 14px;
+}
+.d-name {
+  width: 62px;
+  flex: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.d-pop { width: 30px; flex: none; font-size: 11px; color: #a8dcff; text-align: center; }
+.d-min, .d-max { width: 30px; flex: none; text-align: right; }
+.d-min { opacity: 0.75; }
+.d-max { font-weight: 600; }
+.bar {
+  flex: 1;
+  position: relative;
+  height: 5px;
+  margin: 0 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.25);
+}
+.bar i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: #8fd0ff linear-gradient(90deg, #7fc8ff, #ffd36b);
+}
+.bar .bar-dot {
+  top: -2px;
+  bottom: auto;
+  width: 9px;
+  height: 9px;
+  margin-left: -4px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+
+/* Плитки «Сейчас» */
+.trow {
+  display: flex;
+  padding: 2px;
+  margin: 0 4px 2px;
+  border-radius: 12px;
+}
+.tile {
+  flex: 1;
+  min-width: 0;
+  margin: 2px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.16);
+}
+.tl { font-size: 11px; opacity: 0.75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tv { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.foot {
+  margin: 4px 6px;
+  padding: 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  opacity: 0.7;
+  text-align: center;
+}
+
+.empty {
+  margin: 20px 8px;
+  padding: 14px 10px;
+  border-radius: 12px;
+  text-align: center;
+}
+.empty .wi { margin: 0 auto 6px; }
+.empty-t { font-size: 17px; font-weight: 600; }
+.empty-s { font-size: 13px; opacity: 0.85; margin: 4px 0 12px; }
+.btn {
+  display: inline-block;
+  padding: 7px 14px;
+  border-radius: 18px;
+  background: #fff;
+  color: #1c4f8f;
+  font-weight: 600;
+}
+
+/* ---------- Экран дня ---------- */
+.dhead {
+  display: flex;
+  align-items: center;
+  margin: 6px;
+  padding: 6px 8px;
+  border-radius: 12px;
+}
+.dhead .wi { margin-right: 10px; }
+.dh-t { font-size: 26px; font-weight: 300; }
+.dh-s { font-size: 12px; opacity: 0.8; }
+.half-h { display: flex; align-items: flex-start; padding: 0 10px 4px; }
+.half-h .wi { margin-right: 8px; }
+.half-l { font-size: 12px; font-weight: 600; opacity: 0.75; text-transform: uppercase; }
+.half-p { font-size: 14px; }
+.kv {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 10px;
+  font-size: 14px;
+}
+.kv span { opacity: 0.8; margin-right: 8px; }
+.kv b { font-weight: 600; text-align: right; }
+
+/* ---------- Списки: города, поиск, настройки ---------- */
+.row {
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 4px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.row.focused { background: #2f6fc4; box-shadow: none; }
+.row-main { flex: 1; min-width: 0; }
+.row-t { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-s { font-size: 13px; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row.focused .row-s { opacity: 0.9; }
+.row-w { display: flex; align-items: center; font-size: 16px; font-weight: 600; margin-left: 6px; }
+.row-w .wi { margin-right: 4px; }
+.row.add .row-t { color: #8fc4ff; }
+.row.add.focused .row-t { color: #fff; }
+.row.cyc .row-s:before { content: "◀ "; opacity: 0; }
+.row.cyc .row-s:after { content: " ▶"; opacity: 0; }
+.row.cyc.focused .row-s:before, .row.cyc.focused .row-s:after { opacity: 0.8; }
+
+.inrow { padding: 8px; }
+.inrow.focused { background: #2f6fc4; box-shadow: none; }
+.inrow input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: #fff;
+  color: #111;
+  font-size: 16px;
+  font-family: inherit;
+}
+.hint {
+  padding: 8px 10px;
+  font-size: 13px;
+  opacity: 0.75;
+  line-height: 1.4;
+}
+.hint.focused { box-shadow: none; background: none; opacity: 1; }
+.card.focused { background-color: rgba(255, 255, 255, 0.16); }
+.t-plain .card { background: #1c2430; }
+.t-plain .card.focused { background: #263244; }

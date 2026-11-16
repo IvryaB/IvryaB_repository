@@ -1,0 +1,44 @@
+{
+  "version": "1.0.0",
+  "name": "Погода",
+  "description": "Погода от AccuWeather: сейчас, по часам и на 5 дней. Управление кнопками.",
+  "launch_path": "/index.html",
+  "type": "privileged",
+  "icons": {
+    "56": "/icons/icon-56.png",
+    "112": "/icons/icon-112.png"
+  },
+  "developer": {
+    "name": "IvryaB"
+  },
+  "default_locale": "ru",
+  "locales": {
+    "ru": {
+      "name": "Погода",
+      "subtitle": "Прогноз AccuWeather",
+      "description": "Погода от AccuWeather: сейчас, по часам и на 5 дней."
+    },
+    "uk": {
+      "name": "Погода",
+      "subtitle": "Прогноз AccuWeather",
+      "description": "Погода від AccuWeather: зараз, погодинно та на 5 днів."
+    },
+    "en-US": {
+      "name": "Weather",
+      "subtitle": "AccuWeather forecast",
+      "description": "AccuWeather forecast: now, hourly and 5 days."
+    }
+  },
+  "permissions": {
+    "systemXHR": {
+      "description": "Загрузка погоды с серверов AccuWeather"
+    },
+    "geolocation": {
+      "description": "Погода для текущего местоположения"
+    }
+  },
+  "orientation": "portrait",
+  "cursor": false,
+  "fullscreen": false,
+  "theme_color": "#1b3f6e"
+}
