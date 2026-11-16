@@ -248,7 +248,7 @@
   function upToDate(w) {
     if (!w) return w;
     var now = cityNow(w), today = now.slice(0, 10);
-    var days = w.days.filter(function (d) { return d.date.slice(0, 10) >= today; });
+    var days = w.days.filter(function (d) { return d.date.slice(0, 10) >= today; }).slice(0, 7);
     var hours = w.hours.filter(function (h) { return h.dt.slice(0, 13) > now; });
     if (days.length === w.days.length && hours.length === w.hours.length) return w;
     return { t: w.t, m: w.m, off: w.off, src: w.src, cur: w.cur, headline: w.headline, days: days, hours: hours };

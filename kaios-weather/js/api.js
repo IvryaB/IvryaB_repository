@@ -153,16 +153,32 @@
       });
     }
 
+    // Минимум — за ночь ПОСЛЕ дня (18:00 → 06:00), как в AccuWeather / Weather.com / Pixel:
+    // «Вт 6° / 5°» = днём во вторник до 6°, ночью на среду до 5°. Календарный минимум суток —
+    // это обычно раннее утро того же дня, и он сильно отличается от привычных приложений.
+    function nightMin(arr, date) {
+      if (!arr) return null;
+      var start = times.indexOf(date + 'T18:00');
+      if (start < 0) return null;
+      var m = null;
+      for (var k = start; k < start + 12 && k < arr.length; k++) {
+        var v = num(arr[k]);
+        if (v !== null && (m === null || v < m)) m = v;
+      }
+      return m;
+    }
+
     var dates = d.time || [];
     for (var j = 0; j < dates.length; j++) {
+      var nmin = nightMin(h.temperature_2m, dates[j]), nfmin = nightMin(h.apparent_temperature, dates[j]);
       var code = d.weather_code ? d.weather_code[j] : 3;
       var duv = at(d.uv_index_max, j);
       var phrase = ctx.wmo(code);
       out.days.push({
         date: dates[j],
-        min: at(d.temperature_2m_min, j),
+        min: nmin !== null ? nmin : at(d.temperature_2m_min, j),
         max: at(d.temperature_2m_max, j),
-        fmin: at(d.apparent_temperature_min, j),
+        fmin: nfmin !== null ? nfmin : at(d.apparent_temperature_min, j),
         fmax: at(d.apparent_temperature_max, j),
         d: {
           icon: wmoIcon(code, true),
@@ -212,12 +228,12 @@
         longitude: loc.lon.toFixed(4),
         current: 'temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,cloud_cover,' +
           'pressure_msl,wind_speed_10m,wind_direction_10m,dew_point_2m,visibility,uv_index',
-        hourly: 'temperature_2m,weather_code,precipitation_probability,is_day',
+        hourly: 'temperature_2m,apparent_temperature,weather_code,precipitation_probability,is_day',
         daily: 'weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,' +
           'sunrise,sunset,uv_index_max,precipitation_probability_max,precipitation_sum,wind_speed_10m_max,wind_direction_10m_dominant',
         timezone: 'auto',
-        forecast_days: 7,
-        forecast_hours: 14,
+        // 8 дней почасово: нужна ночь после 7-го дня; показываем 7 дней
+        forecast_days: 8,
         temperature_unit: metric ? 'celsius' : 'fahrenheit',
         wind_speed_unit: metric ? 'kmh' : 'mph',
         precipitation_unit: metric ? 'mm' : 'inch'
