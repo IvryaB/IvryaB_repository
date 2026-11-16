@@ -239,7 +239,12 @@
     if (settings.ttl === 0) return 30 * MIN; // «только при открытии»: при смене города — если старше 30 мин
     return Infinity;                          // «только вручную»
   }
-  function ageOf(loc) { var w = weatherFor(loc); return w ? Date.now() - w.t : Infinity; }
+  function ageOf(loc) {
+    var w = weatherFor(loc);
+    if (!w) return Infinity;
+    var a = Date.now() - w.t;
+    return a < -MIN ? Infinity : a; // часы телефона перевели назад — считаем данные устаревшими
+  }
 
   // Один запрос на место одновременно; результат кладётся в кэш
   function fetchWeather(loc) {
@@ -269,15 +274,38 @@
     var ck = cacheKey(loc.id);
     var fresh = ageOf(loc) < maxAge();
     if ((fresh && !force) || state.inflight[ck]) return;
-    fetchWeather(loc).then(function () {
-      if (state.view === 'main' && isCurrentLoc(loc.id)) renderMain(true);
-    }, function (err) {
-      if (state.view === 'main' && isCurrentLoc(loc.id)) {
-        toast(errText(err));
-        renderMain(true);
-      }
+    var redraw = function () {
+      if (!isCurrentLoc(loc.id)) return;
+      if (state.view === 'main') renderMain(true);       // фокус и прокрутка сохраняются
+      else if (state.view === 'day') views.day.render(true);
+    };
+    fetchWeather(loc).then(redraw, function (err) {
+      if (isCurrentLoc(loc.id) && (state.view === 'main' || state.view === 'day')) toast(errText(err));
+      redraw();
+      refreshSoftkeys();
     });
     if (state.view === 'main') renderStatus();
+    refreshSoftkeys();
+  }
+
+  // Идёт ли сейчас обновление текущего места
+  function busy() {
+    var e = currentEntry();
+    return !!(e && ((e.loc && state.loading[cacheKey(e.loc.id)]) || (e.geo && state.geoStatus === 'locating')));
+  }
+  function refreshSoftkeys() {
+    if (state.view === 'main' || state.view === 'day') views[state.view].softkeys();
+  }
+
+  // Ручное обновление: ничего не перекрывает и не сбрасывает прокрутку.
+  // Прогресс — на центральной софт-клавише и в строке статуса.
+  function refreshNow() {
+    var entry = currentEntry();
+    if (!entry) return;
+    if (entry.geo) resolveGeo(true);
+    if (entry.loc) loadWeather(entry.loc, true);
+    else renderStatus();
+    refreshSoftkeys();
   }
 
   function distKm(a, b, c, d) {
@@ -302,6 +330,7 @@
           loadWeather(geoLoc, false);
           renderMain(true);
         }
+        refreshSoftkeys();
       };
       if (geoLoc && geoLoc.lang === lang() && distKm(geoLoc.lat, geoLoc.lon, lat, lon) < 5) {
         geoLoc.ts = Date.now();
@@ -324,6 +353,7 @@
         toast(t('locError'));
         renderMain(true);
       }
+      refreshSoftkeys();
     }, { enableHighAccuracy: false, timeout: 20000, maximumAge: 30 * MIN });
   }
 
@@ -677,7 +707,7 @@
     enter: function (mode) { enterLocation(mode || false); },
     softkeys: function () {
       var el = focused(), role = el && el.getAttribute('data-role');
-      var c = role === 'day' ? t('open') : (role === 'add' ? t('add') : t('refresh'));
+      var c = role === 'day' ? t('open') : (role === 'add' ? t('add') : (busy() ? t('sk_busy') : t('refresh')));
       softkeys(t('cities'), c, t('settings'));
       updateHours();
     },
@@ -700,8 +730,9 @@
         case 'Enter':
           if (role === 'day') go('day', parseInt(el.getAttribute('data-i'), 10));
           else if (role === 'add') go('search');
-          else enterLocation(true);
+          else refreshNow();
           break;
+        case '0': refreshNow(); break;
         case 'SoftLeft': go('cities'); break;
         case 'SoftRight': go('settings'); break;
         case 'Backspace':
@@ -717,8 +748,9 @@
 
   views.day = {
     enter: function (i) { state.day = i || 0; this.render(); },
-    render: function () {
+    render: function (keep) {
       var entry = currentEntry(), w = entry && weatherFor(entry.loc);
+      var prevIdx = keep ? nav.idx : 0, prevScroll = keep ? $content.scrollTop : 0;
       if (!w || !w.days[state.day]) { go('main'); return; }
       var d = w.days[state.day], m = w.m;
       setTheme(Icons.theme(d.d.icon, true));
@@ -742,11 +774,12 @@
         '<div class="kv"><span>' + esc(t('sunset')) + '</span><b>' + fClock(d.set) + '</b></div>' +
         '</section>';
       $content.scrollTop = 0;
-      collect(0);
+      collect(prevIdx);
+      if (keep) $content.scrollTop = prevScroll;
     },
     softkeys: function () {
       var entry = currentEntry(), w = entry && weatherFor(entry.loc), n = w ? w.days.length : 0;
-      softkeys(state.day > 0 ? '◀' : '', '', state.day < n - 1 ? '▶' : '');
+      softkeys(state.day > 0 ? '◀' : '', busy() ? t('sk_busy') : t('refresh'), state.day < n - 1 ? '▶' : '');
     },
     key: function (k, e) {
       var entry = currentEntry(), w = entry && weatherFor(entry.loc), n = w ? w.days.length : 0;
@@ -757,8 +790,8 @@
           if (state.day > 0) { state.day--; this.render(); } break;
         case 'ArrowRight': case 'SoftRight':
           if (state.day < n - 1) { state.day++; this.render(); } break;
-        case 'Backspace': case 'Enter':
-          e.preventDefault(); backToMain(); break;
+        case 'Enter': case '0': refreshNow(); break;
+        case 'Backspace': e.preventDefault(); backToMain(); break;
         default: return;
       }
     }
@@ -971,7 +1004,7 @@
   /* ================= Экран: настройки ================= */
 
   var OPTS = {
-    ttl: [0, 30, 60, 180, -1],
+    ttl: [0, 15, 30, 60, 180, -1],
     units: ['metric', 'imperial'],
     lang: ['auto', 'ru', 'uk', 'en'],
     geo: [true, false]
